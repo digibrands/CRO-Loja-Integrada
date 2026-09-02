@@ -1,0 +1,6 @@
+{
+  "name": "Diagnóstico & Benefício Loja Integrada",
+  "description": "Automação de diagnóstico técnico de e-commerce da Agência Parceira DigiBrands para sellers Loja Integrada: 11 áreas vitais, Top 1 Essencial no escopo do benefício, Top 2 e 3 e exportação PDF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
