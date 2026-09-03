@@ -69,6 +69,32 @@ export interface Top1BeneficioLojaIntegrada {
 // Alias for backwards compatibility
 export type Top1BanhoDeLoja = Top1BeneficioLojaIntegrada;
 
+export type KanbanStatus = 
+  | 'loja_analisada'
+  | 'em_execucao_top1'
+  | 'proposta_upsell_enviada'
+  | 'em_execucao_top2_top3'
+  | 'finalizadas';
+
+export interface KanbanHistoryEntry {
+  status: KanbanStatus;
+  statusLabel: string;
+  date: string; // ISO date string or formatted date
+  note?: string;
+}
+
+export interface UpsellServiceItem {
+  id: string;
+  title: string;
+  category?: string;
+  description: string;
+  deliverables?: string[];
+  estimatedPrice: number;
+  estimatedDays: number;
+  expectedImpact?: string;
+  includedInProposal?: boolean;
+}
+
 export interface TopUpsellProposal {
   id: 'top2' | 'top3';
   title: string;
@@ -93,6 +119,8 @@ export interface StoreAuditData {
   registeredDate: string;
   firstContactDate?: string;
   status: LeadStatus;
+  kanbanStatus?: KanbanStatus;
+  statusHistory?: KanbanHistoryEntry[];
   contactAttempts: number;
   item11_1SalesData?: string; // Data da última venda e volume nos últimos 30/60/90 dias preenchido pela agência
   
@@ -113,6 +141,10 @@ export interface StoreAuditData {
   top1: Top1BeneficioLojaIntegrada;
   top2: TopUpsellProposal;
   top3: TopUpsellProposal;
+  customUpsellServices?: UpsellServiceItem[];
+  proposalPaymentTerms?: string;
+  proposalNotes?: string;
+  proposalValidityDays?: number;
 
   // SEO Products Analysis (Requisito 6)
   seoProducts?: SeoProductItem[];

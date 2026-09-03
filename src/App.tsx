@@ -201,6 +201,7 @@ export default function App() {
             onNewAuditClick={() => setIsModalOpen(true)}
             onEditStore={(store) => setEditingStore(store)}
             onDeleteStore={handleDeleteStore}
+            onUpdateStore={handleUpdateCurrentStore}
           />
         )}
 

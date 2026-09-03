@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { StoreAuditData } from '../types';
 import { X, Save, Building2, Globe, User, Phone, Mail, FileText, Tag, ShoppingCart } from 'lucide-react';
+import { formatItem11_1 } from '../utils/auditHelpers';
 
 interface EditStoreModalProps {
   isOpen: boolean;
@@ -47,6 +48,22 @@ export const EditStoreModal: React.FC<EditStoreModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const newSalesData = formData.item11_1SalesData.trim();
+    const updatedAreas = store.areas ? store.areas.map(area => {
+      if (area.id === 11 || area.title?.includes("Vendas")) {
+        return {
+          ...area,
+          items: area.items.map(it => {
+            if (it.id === "11.1" || it.id === "item-11-1" || it.title?.includes("Data da última venda")) {
+              return formatItem11_1(it, newSalesData);
+            }
+            return it;
+          })
+        };
+      }
+      return area;
+    }) : store.areas;
+
     const updated: StoreAuditData = {
       ...store,
       storeName: formData.storeName.trim() || store.storeName,
@@ -56,8 +73,9 @@ export const EditStoreModal: React.FC<EditStoreModalProps> = ({
       storeUrl: formData.storeUrl.trim() || store.storeUrl,
       segment: formData.segment.trim() || store.segment,
       notes: formData.notes.trim(),
-      item11_1SalesData: formData.item11_1SalesData.trim(),
-      overallScore: Number(formData.overallScore) || store.overallScore
+      item11_1SalesData: newSalesData,
+      overallScore: Number(formData.overallScore) || store.overallScore,
+      areas: updatedAreas
     };
     onSave(updated);
     onClose();

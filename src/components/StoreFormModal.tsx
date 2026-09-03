@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { StoreAuditData, ChecklistArea } from '../types';
 import { DEFAULT_CHECKLIST_AREAS } from '../data/defaultChecklist';
+import { generateDefaultSeoProducts, formatItem11_1 } from '../utils/auditHelpers';
 import { 
   Sparkles, 
   X, 
@@ -105,27 +106,22 @@ export const StoreFormModal: React.FC<StoreFormModalProps> = ({
       if (result.success && result.data) {
         const aiData = result.data;
 
-        // Ensure item11.1 in checklist has the agency sales data if entered
+        // Ensure item11.1 in checklist adheres to sales rules
         let finalAreas = (aiData.areas && aiData.areas.length > 0 ? aiData.areas : DEFAULT_CHECKLIST_AREAS) as ChecklistArea[];
-        if (item11_1SalesData.trim()) {
-          finalAreas = finalAreas.map(area => {
-            if (area.id === 11 || area.num === '11') {
-              return {
-                ...area,
-                items: area.items.map(item => {
-                  if (item.id === 'item-11-1' || item.id === '11.1') {
-                    return {
-                      ...item,
-                      diagnosticFindings: `${item11_1SalesData.trim()} — ${item.diagnosticFindings || 'Registro de vendas verificado pela equipe técnica.'}`
-                    };
-                  }
-                  return item;
-                })
-              };
-            }
-            return area;
-          });
-        }
+        finalAreas = finalAreas.map(area => {
+          if (area.id === 11 || area.num === '11') {
+            return {
+              ...area,
+              items: area.items.map(item => {
+                if (item.id === 'item-11-1' || item.id === '11.1' || item.title?.includes('Data da última venda')) {
+                  return formatItem11_1(item, item11_1SalesData.trim());
+                }
+                return item;
+              })
+            };
+          }
+          return area;
+        });
 
         // Build full store structure
         const fullAudit: StoreAuditData = {
@@ -229,26 +225,20 @@ export const StoreFormModal: React.FC<StoreFormModalProps> = ({
       console.error('Audit failed, generating enhanced fallback store:', err);
       
       // Update checklist with sales data for fallback
-      let fallbackAreas = DEFAULT_CHECKLIST_AREAS;
-      if (item11_1SalesData.trim()) {
-        fallbackAreas = fallbackAreas.map(area => {
-          if (area.id === 11 || area.num === '11') {
-            return {
-              ...area,
-              items: area.items.map(item => {
-                if (item.id === 'item-11-1' || item.id === '11.1') {
-                  return {
-                    ...item,
-                    diagnosticFindings: `${item11_1SalesData.trim()} — Constatação registrada pela agência.`
-                  };
-                }
-                return item;
-              })
-            };
-          }
-          return area;
-        });
-      }
+      let fallbackAreas = DEFAULT_CHECKLIST_AREAS.map(area => {
+        if (area.id === 11 || area.num === '11') {
+          return {
+            ...area,
+            items: area.items.map(item => {
+              if (item.id === 'item-11-1' || item.id === '11.1' || item.title?.includes('Data da última venda')) {
+                return formatItem11_1(item, item11_1SalesData.trim());
+              }
+              return item;
+            })
+          };
+        }
+        return area;
+      });
 
       const fallbackAudit: StoreAuditData = {
         id: 'store-' + Date.now(),
@@ -273,7 +263,7 @@ export const StoreFormModal: React.FC<StoreFormModalProps> = ({
         urgentBottlenecks: ['SEO nos produtos principais', 'Banners e identidade visual'],
         areas: fallbackAreas,
         top1: {
-          title: 'Top 1 — Banho de Loja Essencial (BENEFICIO LOJA INTEGRADA)',
+          title: 'Top 1 — Essencial (BENEFICIO LOJA INTEGRADA)',
           includedItems: {
             layoutStandardAndBanner: true,
             seo20Products: true,
@@ -281,17 +271,22 @@ export const StoreFormModal: React.FC<StoreFormModalProps> = ({
           },
           details: 'Execução pela Agência Parceira DigiBrands dentro do benefício oficial Loja Integrada.',
           bannerSpecs: '1 banner promocional 1920x600px desktop com oferta de lançamento',
-          seoProductsList: [
-            'Produto Principal 01', 'Produto Principal 02', 'Produto Principal 03', 'Produto Principal 04',
-            'Produto Principal 05', 'Produto Principal 06', 'Produto Principal 07', 'Produto Principal 08',
-            'Produto Principal 09', 'Produto Principal 10', 'Produto Principal 11', 'Produto Principal 12',
-            'Produto Principal 13', 'Produto Principal 14', 'Produto Principal 15', 'Produto Principal 16',
-            'Produto Principal 17', 'Produto Principal 18', 'Produto Principal 19', 'Produto Principal 20'
-          ],
+          seoProductsList: generateDefaultSeoProducts(
+            storeName || 'Loja Online',
+            segment || 'Varejo',
+            customProductsText ? customProductsText.split(/[\n,;]+/).map(p => p.trim()).filter(p => p.length > 1) : undefined,
+            storeUrl
+          ).map(p => p.productName),
           domainName: storeUrl.replace('https://', ''),
           executionStatus: 'em_andamento',
           isFreeBenefit: true
         },
+        seoProducts: generateDefaultSeoProducts(
+          storeName || 'Loja Online',
+          segment || 'Varejo',
+          customProductsText ? customProductsText.split(/[\n,;]+/).map(p => p.trim()).filter(p => p.length > 1) : undefined,
+          storeUrl
+        ),
         top2: {
           id: 'top2',
           title: 'Top 2 — Automação de Carrinho Abandonado no WhatsApp',

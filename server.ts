@@ -4,6 +4,7 @@ import fs from "fs";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
+import { generateDefaultSeoProducts, isGenericPlaceholder, generateNaturalKeyword, hasNoSalesInPeriods, formatItem11_1 } from "./src/utils/auditHelpers";
 
 dotenv.config();
 
@@ -68,6 +69,7 @@ async function inspectStoreOnline(rawUrl: string): Promise<{
   hasPrivacyPolicy: boolean;
   socialLinks: string[];
   rawSummary: string;
+  detectedProductNames: string[];
 }> {
   let targetUrl = rawUrl.trim();
   if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
@@ -97,6 +99,7 @@ async function inspectStoreOnline(rawUrl: string): Promise<{
     hasPrivacyPolicy: false,
     socialLinks: [] as string[],
     rawSummary: "",
+    detectedProductNames: [] as string[],
   };
 
   try {
@@ -137,10 +140,74 @@ async function inspectStoreOnline(rawUrl: string): Promise<{
       result.bannerCount = bannerMatches ? bannerMatches.length : 0;
       result.hasBanners = result.bannerCount > 0 || /banner/i.test(html);
 
-      // Detect Products on Home
+      // Detect Products on Home & Extract Real Product Names
       const prodMatches = html.match(/(class=["'][^"']*(?:produto|item-produto|product-box|listagem-item|vitrine)[^"']*["'])/gi);
       result.productCount = prodMatches ? Math.min(prodMatches.length, 60) : 0;
       result.hasProducts = result.productCount > 0 || /preco-promocional|valor-de|preco-por/i.test(html);
+
+      const detectedList: string[] = [];
+      const seenNames = new Set<string>();
+
+      const addCandidateName = (rawText: string) => {
+        if (!rawText) return;
+        const cleaned = rawText
+          .replace(/<[^>]+>/g, " ")
+          .replace(/&nbsp;/g, " ")
+          .replace(/&amp;/g, "&")
+          .replace(/&quot;/g, '"')
+          .replace(/\s+/g, " ")
+          .trim();
+        if (cleaned.length < 5 || cleaned.length > 90) return;
+        if (isGenericPlaceholder(cleaned)) return;
+        const lower = cleaned.toLowerCase();
+        const nonProdWords = ["início", "carrinho", "contato", "sobre nós", "fale conosco", "cadastre-se", "minha conta", "compre agora", "frete grátis", "todos os direitos", "loja integrada", "whatsapp"];
+        if (nonProdWords.some(w => lower === w || lower.startsWith(w + " ") || lower.endsWith(" " + w))) return;
+        if (/^r\$\s*[0-9]+/i.test(cleaned)) return;
+        if (seenNames.has(lower)) return;
+        seenNames.add(lower);
+        detectedList.push(cleaned);
+      };
+
+      // 1. JSON-LD schema
+      const jsonLdMatches = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
+      if (jsonLdMatches) {
+        for (const jm of jsonLdMatches) {
+          try {
+            const rawJson = jm.replace(/<script[^>]*>|<\/script>/gi, "");
+            const parsed = JSON.parse(rawJson);
+            const checkObj = (obj: any) => {
+              if (!obj) return;
+              if (obj["@type"] === "Product" && obj.name) addCandidateName(obj.name);
+              if (obj.itemListElement && Array.isArray(obj.itemListElement)) {
+                obj.itemListElement.forEach((el: any) => {
+                  if (el?.item?.name) addCandidateName(el.item.name);
+                  else if (el?.name) addCandidateName(el.name);
+                });
+              }
+            };
+            if (Array.isArray(parsed)) parsed.forEach(checkObj);
+            else checkObj(parsed);
+          } catch { }
+        }
+      }
+
+      // 2. Loja Integrada .nome-produto tags
+      const liNameRegex = /class=["'][^"']*\bnome-produto\b[^"']*["'][^>]*>([\s\S]*?)<\//gi;
+      let m: RegExpExecArray | null;
+      while ((m = liNameRegex.exec(html)) !== null) {
+        addCandidateName(m[1]);
+      }
+
+      // 3. Product anchor tags with title
+      const aTitleRegex = /<a[^>]*class=["'][^"']*(?:produto|item-produto)[^"']*["'][^>]*title=["']([^"']+)["']/gi;
+      while ((m = aTitleRegex.exec(html)) !== null) {
+        addCandidateName(m[1]);
+      }
+
+      result.detectedProductNames = detectedList.slice(0, 20);
+      if (result.detectedProductNames.length > 0) {
+        result.productCount = Math.max(result.productCount, result.detectedProductNames.length);
+      }
 
       // Detect WhatsApp Chat
       result.hasWhatsapp = /wa\.me|api\.whatsapp\.com|web\.whatsapp\.com|whatsapp-button|jivo/i.test(html);
@@ -242,8 +309,8 @@ DIRETRIZES ESSENCIAIS E OBRIGATÓRIAS:
    - Itens CONFORME: "Monitoramento contínuo"
 
 5. Item 11.1 ("Data da última venda e volume nos últimos 30/60/90 dias"):
-   - Quando informado que a loja ainda não teve vendas na plataforma, NÃO REPITA várias vezes a informação.
-   - Forneça como diagnóstico SEMPRE a recomendação da implementação conjunta do TOP 1, TOP 2 e TOP 3 para estruturar e destravar as vendas.
+   - REGRA OBRIGATÓRIA: Sempre que a loja não tiver vendas nos últimos 30, 60 ou 90 dias (ou se o campo de vendas estiver vazio, indicar 0 vendas em 30/60/90 dias, sem vendas ou estagnação), o status deste item 11.1 OBRIGATORIAMENTE deve ser "ajustar".
+   - O diagnóstico e a recomendação devem SEMPRE conter as propostas de aplicação conjunta do TOP 1 (Benefício Loja Integrada), TOP 2 (Recuperação no WhatsApp) e TOP 3 (Tráfego Qualificado) para destravar e estruturar as vendas da loja.
 
 6. Lista de 20 Produtos com Otimização de SEO (seoProducts):
    - Se informados produtos pela agência, otimize-os. Se não informados, selecione os 20 produtos com maior potencial de venda conforme análise de mercado e dados de busca do Google para o segmento da loja.
@@ -412,7 +479,7 @@ Gere o JSON com a pontuação de 0 a 100 (overallScore), o resumo executivo, a a
   }
 
   if (aiSuccess && parsedData) {
-    const sanitized = normalizeAuditResult(parsedData, { storeName, segment, item11_1SalesData, customProductsText });
+    const sanitized = normalizeAuditResult(parsedData, { storeName, segment, item11_1SalesData, customProductsText, storeUrl });
     return res.json({ success: true, data: sanitized });
   }
 
@@ -429,7 +496,7 @@ Gere o JSON com a pontuação de 0 a 100 (overallScore), o resumo executivo, a a
     customProductsText,
   });
 
-  const sanitizedFallback = normalizeAuditResult(fallbackAudit, { storeName, segment, item11_1SalesData, customProductsText });
+  const sanitizedFallback = normalizeAuditResult(fallbackAudit, { storeName, segment, item11_1SalesData, customProductsText, storeUrl });
 
   return res.json({
     success: true,
@@ -439,12 +506,16 @@ Gere o JSON com a pontuação de 0 a 100 (overallScore), o resumo executivo, a a
   });
 });
 
-function normalizeAuditResult(audit: any, context: { storeName?: string; segment?: string; item11_1SalesData?: string; customProductsText?: string }) {
+export function normalizeAuditResult(
+  audit: any,
+  context: { storeName?: string; segment?: string; item11_1SalesData?: string; customProductsText?: string; storeUrl?: string }
+) {
   if (!audit) return audit;
 
   const storeName = context.storeName || "Loja Online";
   const segment = context.segment || "Varejo";
   const salesInput = (context.item11_1SalesData || "").trim();
+  const storeUrl = context.storeUrl || "";
 
   // Normalize Areas & Items
   if (Array.isArray(audit.areas)) {
@@ -461,15 +532,7 @@ function normalizeAuditResult(audit: any, context: { storeName?: string; segment
 
           // Special logic for Item 11.1
           if (item.id === "11.1" || item.id === "item-11-1" || (area.id === 11 && item.title?.includes("Data da última venda"))) {
-            const hasNoSales = !salesInput || salesInput.toLowerCase().includes("não teve vendas") || salesInput.toLowerCase().includes("sem vendas") || salesInput.toLowerCase().includes("nenhuma venda") || salesInput.toLowerCase().includes("0 vendas") || salesInput.toLowerCase().includes("ainda não");
-            if (hasNoSales) {
-              item.diagnosticFindings = "A loja ainda não registrou vendas consolidadas na plataforma Loja Integrada. Para destravar as primeiras conversões com consistência, é fundamental a implementação conjunta do TOP 1 (identidade, banner, SEO e domínio), TOP 2 (automação de carrinho) e TOP 3 (geração de tráfego qualificado).";
-              item.recommendedAction = "Implementar o TOP 1 (Escopo do Benefício Loja Integrada) imediatamente, e estruturar o TOP 2 e TOP 3 para atrair e converter os primeiros clientes.";
-              item.status = "ajustar";
-            } else {
-              item.diagnosticFindings = `${salesInput}. Recomenda-se a ativação do TOP 1 (Escopo do Benefício Loja Integrada) para acelerar o ritmo de conversão e a implementação do TOP 2 e TOP 3.`;
-              item.recommendedAction = "Executar o TOP 1 (Escopo do Benefício Loja Integrada) e otimizar canais de aquisição.";
-            }
+            Object.assign(item, formatItem11_1(item, salesInput));
           }
 
           // Deadlines assignment
@@ -514,24 +577,38 @@ function normalizeAuditResult(audit: any, context: { storeName?: string; segment
     audit.executiveSummary = audit.executiveSummary.replace(/banho de loja/gi, "Escopo do Benefício Loja Integrada");
   }
 
-  // Parse custom products if provided
+  // Parse custom products if provided, filtering out generic placeholders
   let customList: string[] = [];
   if (context.customProductsText) {
     customList = context.customProductsText
       .split(/[\n,;]+/)
       .map((p) => p.trim())
-      .filter((p) => p.length > 1);
+      .filter((p) => p.length > 1 && !isGenericPlaceholder(p));
   }
 
-  // Ensure 20 SEO Products
-  if (!audit.seoProducts || !Array.isArray(audit.seoProducts) || audit.seoProducts.length < 5) {
-    audit.seoProducts = generate20SeoProducts(storeName, segment, customList.length > 0 ? customList : audit.top1?.seoProductsList);
-  } else if (customList.length > 0) {
-    // If agency provided custom products, align the first N items with them
+  // Filter out any placeholders from top1.seoProductsList
+  const validTop1List = (audit.top1?.seoProductsList || []).filter(
+    (p: string) => typeof p === "string" && p.trim().length > 1 && !isGenericPlaceholder(p)
+  );
+
+  // Check if current audit.seoProducts has generic placeholders or is missing
+  const hasPlaceholders =
+    !audit.seoProducts ||
+    !Array.isArray(audit.seoProducts) ||
+    audit.seoProducts.length < 5 ||
+    audit.seoProducts.some((p: any) => isGenericPlaceholder(p?.productName) || isGenericPlaceholder(p?.focusKeyword));
+
+  if (hasPlaceholders) {
+    const listToUse = customList.length > 0 ? customList : (validTop1List.length > 0 ? validTop1List : undefined);
+    audit.seoProducts = generateDefaultSeoProducts(storeName, segment, listToUse, storeUrl);
+  }
+
+  // If agency provided custom products, align the first N items with them
+  if (customList.length > 0) {
     customList.slice(0, 20).forEach((cName, idx) => {
       if (audit.seoProducts[idx]) {
         audit.seoProducts[idx].productName = cName;
-        audit.seoProducts[idx].focusKeyword = `${cName.toLowerCase()} comprar online`;
+        audit.seoProducts[idx].focusKeyword = generateNaturalKeyword(cName, segment);
         audit.seoProducts[idx].optimizedTitle = `${cName} com Envio Rápido | ${storeName}`;
       }
     });
@@ -539,101 +616,27 @@ function normalizeAuditResult(audit: any, context: { storeName?: string; segment
 
   // Guarantee exactly 20 items in seoProducts
   if (audit.seoProducts.length < 20) {
-    const filler = generate20SeoProducts(storeName, segment);
+    const filler = generateDefaultSeoProducts(storeName, segment, undefined, storeUrl);
     while (audit.seoProducts.length < 20) {
       const idx = audit.seoProducts.length;
       audit.seoProducts.push({
         ...filler[idx % filler.length],
-        id: `seo-prod-${idx + 1}`
+        id: `seo-prod-${idx + 1}`,
       });
     }
+  }
+
+  // Always keep top1.seoProductsList 100% in sync with real product names
+  if (audit.top1) {
+    audit.top1.seoProductsList = audit.seoProducts.slice(0, 20).map((p: any) => p.productName);
   }
 
   return audit;
 }
 
-function generate20SeoProducts(storeName: string, segment: string, customNames?: string[]) {
-  const segLower = (segment || "").toLowerCase();
-  let base: { name: string; keyword: string; category: string; adjustments: string }[] = [];
-
-  if (segLower.includes("moda") || segLower.includes("vestu") || segLower.includes("roupa") || segLower.includes("acessório")) {
-    base = [
-      { name: "Vestido Midi Floral Elegance", keyword: "vestido midi floral estampado", category: "Vestidos", adjustments: "Inserir H1 com 'vestido midi floral', tabela de medidas em cm na descrição e alt tag em 3 fotos." },
-      { name: "Calça Pantalona Linho Premium", keyword: "calça pantalona linho cintura alta", category: "Calças", adjustments: "Criar URL amigável /calca-pantalona-linho-cintura-alta, destacar composição 100% linho e caimento." },
-      { name: "Blazer Feminino Estruturado Alfaiataria", keyword: "blazer alfaiataria feminino acinturado", category: "Blazers", adjustments: "Otimizar meta tag com frete e parcelamento, listar ocasiões de uso e detalhes do forro." },
-      { name: "Conjunto Moletom Flanelado Confort", keyword: "conjunto moletom feminino flanelado", category: "Conjuntos", adjustments: "Adicionar palavras-chave de inverno, guia de tamanhos P ao GG e fotos com modelo real." },
-      { name: "Camisa Social Seda Manga Longa", keyword: "camisa social feminina manga longa", category: "Camisas", adjustments: "Inserir termos de busca para look trabalho, especificações do tecido e botões perolados." },
-      { name: "Saia Plissada Cintura Alta", keyword: "saia plissada midi cintura alta", category: "Saias", adjustments: "Destacar caimento do plissado, forro interno e combinações com calçados." },
-      { name: "Bolsa Transversal Couro Sintético", keyword: "bolsa transversal feminina pequena", category: "Bolsas", adjustments: "Informar dimensões exatas (altura x largura x profundidade), divisórias e tipo de fecho." },
-      { name: "Brinco Argola Banhado Ouro 18k", keyword: "brinco argola semijoia banhada ouro", category: "Semijoias", adjustments: "Destacar garantia de banho, tecnologia antialérgica e peso da peça." },
-      { name: "Regata Canelada Gola Alta", keyword: "regata canelada gola alta basica", category: "Blusas", adjustments: "Otimizar título para busca de básicos, elasticidade do tecido e kit com cores." },
-      { name: "Short Jeans Cintura Alta Destroyed", keyword: "short jeans feminino cintura alta desfiado", category: "Shorts", adjustments: "Incluir medidas de quadril e cintura, lavagem e composição com elastano." },
-      { name: "Vestido Longo Festa Fenda Lateral", keyword: "vestido longo festa madrinha formatura", category: "Vestidos de Festa", adjustments: "Otimizar para buscas de casamentos e formaturas, tecido acetinado e caimento." },
-      { name: "Cardigan Tricô Alongado Outono", keyword: "cardigan feminino trico longo", category: "Casacos & Tricôs", adjustments: "Palavras-chave sazonais, orientações de lavagem e textura dos pontos." },
-      { name: "Colar Choker Corrente Fita", keyword: "colar choker fita banhado ouro", category: "Semijoias", adjustments: "Comprimento da corrente, extensor ajustável e fotos de composição de mix de colares." },
-      { name: "Cinto Feminino Fivela Dourada", keyword: "cinto couro legitimo fivela quadrada", category: "Acessórios", adjustments: "Largura da tira em centímetros, opções de furação e tabela de medidas." },
-      { name: "T-Shirt Algodão Penteado Estonada", keyword: "camiseta feminina algodao premium", category: "T-shirts", adjustments: "Gramatura do tecido 100% algodão, estampa silk screen resistente e caimento soltinho." },
-      { name: "Jaqueta Jeans Oversized Streetwear", keyword: "jaqueta jeans oversized feminina", category: "Casacos", adjustments: "Medidas de ombro e manga, lavagem vintage e bolsos funcionais." },
-      { name: "Macacão Pantacourt com Cinto Faixa", keyword: "macacao pantacourt feminino elegante", category: "Macacões", adjustments: "Zíper invisível traseiro, fotos da modelo em movimento e tecido não transparente." },
-      { name: "Scarpin Clássico Salto Médio", keyword: "sapato scarpin salto medio confort", category: "Calçados", adjustments: "Palmilha anatômica confort, altura do salto em cm e sola antiderrapante." },
-      { name: "Blusa Crepe Manga Bufante", keyword: "blusa feminina manga bufante princesa", category: "Blusas", adjustments: "Transparência zero, acabamento da gola e facilidade para passar." },
-      { name: "Cropped Alfaiataria Alça Larga", keyword: "cropped alfaiataria feminino estruturado", category: "Croppeds", adjustments: "Estrutura com barbatana, forro duplo e combinações com peças de cintura alta." },
-    ];
-  } else {
-    base = [
-      { name: `Produto Destaque 01 - Principal Atração`, keyword: `comprar ${storeName} online entrega rapida`, category: "Mais Vendidos", adjustments: "Otimizar H1 com palavra-chave transacional, adicionar 4 fotos de alta definição e descrição rica." },
-      { name: `Produto Destaque 02 - Oferta da Semana`, keyword: `melhor preco ${segment} loja oficial`, category: "Ofertas", adjustments: "Configurar selos de garantia, prazo de entrega por CEP e especificações técnicas completas." },
-      { name: `Produto Destaque 03 - Lançamento Exclusivo`, keyword: `lancamento ${segment} com garantia`, category: "Lançamentos", adjustments: "Inserir vídeo de demonstração, atributos de variação de cor/tamanho e FAQ rápido." },
-      { name: `Produto Destaque 04 - Kit Promocional Econômico`, keyword: `kit promocional atacado ${segment}`, category: "Kits", adjustments: "Destacar economia percentual do kit, tabela de itens inclusos e embalagem segura." },
-      { name: `Produto Destaque 05 - Linha Premium`, keyword: `${segment} linha premium qualidade superior`, category: "Linha Premium", adjustments: "Enfatizar diferenciais da matéria-prima, certificações e depoimentos de compradores." },
-      { name: `Produto Destaque 06 - Modelo Clássico`, keyword: `modelo classico original ${segment}`, category: "Clássicos", adjustments: "Otimizar meta description com chamada para parcelamento sem juros e frete." },
-      { name: `Produto Destaque 07 - Versão Compacta Portátil`, keyword: `${segment} compacto portatil pratico`, category: "Portáteis", adjustments: "Detalhar peso, dimensões e facilidade de transporte no dia a dia." },
-      { name: `Produto Destaque 08 - Edição Especial Limitada`, keyword: `edicao limitada ${segment} colecionador`, category: "Especiais", adjustments: "Criar senso de urgência com contador de estoque e selo de autenticidade." },
-      { name: `Produto Destaque 09 - Modelo Alta Performance`, keyword: `${segment} profissional alta performance`, category: "Profissional", adjustments: "Comparativo técnico contra concorrentes e manual de instruções em PDF." },
-      { name: `Produto Destaque 10 - Acessório Complementar`, keyword: `acessorios originais para ${segment}`, category: "Acessórios", adjustments: "Configurar como produto cross-sell na página do item principal." },
-      { name: `Produto Destaque 11 - Kit Refil Econômico`, keyword: `refil reposicao ${segment} desconto`, category: "Refis", adjustments: "Explicar compatibilidade exata de modelos e economia a longo prazo." },
-      { name: `Produto Destaque 12 - Linha Sustentável`, keyword: `${segment} sustentavel ecologico reciclaval`, category: "Eco", adjustments: "Selos de sustentabilidade, materiais reciclados e impacto positivo." },
-      { name: `Produto Destaque 13 - Modelo Confort`, keyword: `${segment} ergonomico confort certificado`, category: "Conforto", adjustments: "Benefícios para postura e bem-estar, recomendação ergonômica." },
-      { name: `Produto Destaque 14 - Versão Plus`, keyword: `${segment} tamanho grande reforçado`, category: "Plus Size", adjustments: "Tabela detalhada de capacidades e medidas máximas suportadas." },
-      { name: `Produto Destaque 15 - Kit Presente`, keyword: `presente ideal ${segment} com embalagem`, category: "Presentes", adjustments: "Opção de cartão de mensagem, embalagem especial de presente." },
-      { name: `Produto Destaque 16 - Modelo Resistente`, keyword: `${segment} resistente duravel`, category: "Resistentes", adjustments: "Grau de proteção, testes de durabilidade e orientações de uso." },
-      { name: `Produto Destaque 17 - Linha Pronta Entrega`, keyword: `${segment} pronta entrega envio 24h`, category: "Pronta Entrega", adjustments: "Selo de despacho em 24h e rastreamento online dos Correios/Transportadora." },
-      { name: `Produto Destaque 18 - Modelo Dia a Dia`, keyword: `${segment} basico dia a dia custo beneficio`, category: "Básicos", adjustments: "Foco no custo-benefício, durabilidade comprovada e versatilidade." },
-      { name: `Produto Destaque 19 - Versão Multi 3 em 1`, keyword: `${segment} multifuncional 3 em 1 completo`, category: "Multiuso", adjustments: "Fotos e descrições detalhando cada uma das 3 funções integradas." },
-      { name: `Produto Destaque 20 - Coleção da Estação`, keyword: `nova colecao ${segment} tendencia ano`, category: "Tendências", adjustments: "SEO sazonal com as principais tendências de busca do Google deste ano." },
-    ];
-  }
-
-  if (customNames && customNames.length > 0) {
-    return customNames.slice(0, 20).map((cName, idx) => {
-      const template = base[idx % base.length];
-      const cleanName = cName.trim();
-      const keyword = `${cleanName.toLowerCase()} comprar online`;
-      return {
-        id: `seo-prod-${idx + 1}`,
-        productName: cleanName,
-        category: template.category || "Catálogo Geral",
-        focusKeyword: keyword,
-        currentTitle: cleanName,
-        optimizedTitle: `${cleanName} com Envio Rápido e Oferta Especial | ${storeName}`,
-        metaDescription: `Compre ${cleanName} na ${storeName} com garantia de procedência, parcelamento facilitado e entrega expressa. Confira agora!`,
-        seoAdjustments: `Ajustar tag H1 principal para conter "${keyword}", incluir descrição com mais de 250 palavras e otimizar texto alt nas imagens.`,
-        searchVolumeDemand: idx < 5 ? "Muito Alta" : idx < 12 ? "Alta" : "Média",
-      };
-    });
-  }
-
-  return base.slice(0, 20).map((item, idx) => ({
-    id: `seo-prod-${idx + 1}`,
-    productName: item.name,
-    category: item.category,
-    focusKeyword: item.keyword,
-    currentTitle: item.name,
-    optimizedTitle: `${item.name} - ${item.keyword} | ${storeName}`,
-    metaDescription: `Encontre ${item.name} com as melhores condições na ${storeName}. Aproveite parcelamento em até 12x, frete seguro e qualidade garantida!`,
-    seoAdjustments: item.adjustments,
-    searchVolumeDemand: idx < 5 ? "Muito Alta" : idx < 12 ? "Alta" : "Média",
-  }));
+function generate20SeoProducts(storeName: string, segment: string, customNames?: string[], storeUrl?: string) {
+  const filtered = (customNames || []).filter((n) => typeof n === "string" && !isGenericPlaceholder(n));
+  return generateDefaultSeoProducts(storeName, segment, filtered.length > 0 ? filtered : undefined, storeUrl);
 }
 
 function generateTailoredAudit(params: {
@@ -652,9 +655,23 @@ function generateTailoredAudit(params: {
   const inspection = params.inspection || {};
   const salesInput = params.item11_1SalesData?.trim();
 
+  const customList = (params.customProductsText || "")
+    .split(/[\n,;]+/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 1 && !isGenericPlaceholder(p));
+
+  const listToUse =
+    customList.length > 0
+      ? customList
+      : Array.isArray(inspection.detectedProductNames) && inspection.detectedProductNames.length > 0
+      ? inspection.detectedProductNames
+      : undefined;
+
+  const tailoredSeoProducts = generateDefaultSeoProducts(name, segment, listToUse, url);
+
   const domainName = inspection.isCustomDomain
-    ? (url.replace(/https?:\/\//, '').replace(/\/.*$/, ''))
-    : `www.${name.toLowerCase().replace(/[^a-z0-9]/g, '')}.com.br`;
+    ? url.replace(/https?:\/\//, "").replace(/\/.*$/, "")
+    : `www.${name.toLowerCase().replace(/[^a-z0-9]/g, "")}.com.br`;
 
   const areas = [
     {
@@ -1315,19 +1332,18 @@ function generateTailoredAudit(params: {
       num: "11",
       title: "Histórico e Comportamento de Vendas",
       items: [
-        {
-          id: "11.1",
-          title: "Data da última venda e volume nos últimos 30/60/90 dias",
-          note: "Dados informados pelo funcionário da agência",
-          flag: "Ritmo de vendas estagnado ou sem pedidos recentes",
-          status: salesInput ? "conforme" : "ajustar",
-          priority: "alta",
-          diagnosticFindings: salesInput
-            ? `${salesInput} (Dados verificados e informados pela equipe técnica da DigiBrands). O ritmo de pedidos aponta necessidade de tração imediata.`
-            : "Loja com histórico de pedidos em ritmo incipiente, demandando tração com melhorias de vitrine e catálogo.",
-          recommendedAction: "Implementar o Top 1 (Banho de Loja) para elevar a taxa de conversão e reativar a base de clientes.",
-          isBanhoDeLojaCandidate: false,
-        },
+        formatItem11_1(
+          {
+            id: "11.1",
+            title: "Data da última venda e volume nos últimos 30/60/90 dias",
+            note: "Dados informados pelo funcionário da agência",
+            flag: "Ritmo de vendas estagnado ou sem pedidos recentes",
+            status: "ajustar",
+            priority: "alta",
+            isBanhoDeLojaCandidate: false,
+          },
+          salesInput
+        ),
         {
           id: "11.2",
           title: "Taxa de conversão média da loja acima de 1.2%",
@@ -1388,17 +1404,12 @@ function generateTailoredAudit(params: {
       },
       details: "Executado pela Agência Parceira DigiBrands no escopo do benefício Loja Integrada: adequação do layout padrão + 1 banner profissional, SEO dos 20 produtos principais e configuração de domínio próprio.",
       bannerSpecs: "1 banner promocional desktop (1920x600px) e mobile com proposta de valor e CTA",
-      seoProductsList: [
-        "Produto Principal 01", "Produto Principal 02", "Produto Principal 03", "Produto Principal 04",
-        "Produto Principal 05", "Produto Principal 06", "Produto Principal 07", "Produto Principal 08",
-        "Produto Principal 09", "Produto Principal 10", "Produto Principal 11", "Produto Principal 12",
-        "Produto Principal 13", "Produto Principal 14", "Produto Principal 15", "Produto Principal 16",
-        "Produto Principal 17", "Produto Principal 18", "Produto Principal 19", "Produto Principal 20"
-      ],
+      seoProductsList: tailoredSeoProducts.map((p) => p.productName),
       domainName,
       executionStatus: "em_andamento",
       isFreeBenefit: true,
     },
+    seoProducts: tailoredSeoProducts,
     top2: {
       id: "top2",
       title: "Top 2 — Automação e Recuperação de Carrinho Abandonado no WhatsApp",
@@ -1463,7 +1474,15 @@ function saveStoredAudits(audits: any[]) {
 
 // Store CRUD API Endpoints with Persistent Storage
 app.get("/api/stores", (req, res) => {
-  const audits = getStoredAudits();
+  const audits = getStoredAudits().map((store) =>
+    normalizeAuditResult(store, {
+      storeName: store.storeName,
+      segment: store.segment,
+      item11_1SalesData: store.item11_1SalesData,
+      storeUrl: store.storeUrl,
+    })
+  );
+  saveStoredAudits(audits);
   res.json({ success: true, data: audits });
 });
 

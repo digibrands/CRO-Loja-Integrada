@@ -2,7 +2,7 @@ import React, { useRef, useState } from 'react';
 import { StoreAuditData } from '../types';
 import { Download, Printer, CheckCircle2, Sparkles, AlertCircle, FileText, ArrowLeft, FileCode, Check, ShieldAlert, Zap, Clock } from 'lucide-react';
 import { downloadDirectPdf, downloadHtmlReport } from '../utils/pdfExport';
-import { getItemDeadline, getRiskAndBenefit, generateDefaultSeoProducts } from '../utils/auditHelpers';
+import { getItemDeadline, getRiskAndBenefit, generateDefaultSeoProducts, formatItem11_1 } from '../utils/auditHelpers';
 import html2canvas from 'html2canvas-pro';
 import jsPDF from 'jspdf';
 
@@ -124,9 +124,15 @@ export const PdfPreviewReport: React.FC<PdfPreviewReportProps> = ({ store, onNav
     .replace(/Top 2 e 3 upsell/gi, 'Top 2 e 3 (execução opcional seller mediante orçamento)')
     .replace(/upsell no Top 2 e 3/gi, 'Top 2 e 3 (execução opcional seller mediante orçamento)');
 
-  const seoProducts = (store.seoProducts && store.seoProducts.length >= 5)
-    ? store.seoProducts
-    : generateDefaultSeoProducts(store.storeName, store.segment, store.top1?.seoProductsList);
+  const hasGenericPreviewPlaceholders = !store.seoProducts || store.seoProducts.length < 5 || store.seoProducts.some(p => {
+    const name = (p.productName || '').toLowerCase();
+    const kw = (p.focusKeyword || '').toLowerCase();
+    return name.includes('produto principal') || name.includes('produto destaque') || kw.includes('produto principal') || /produto\s+\d+/i.test(name);
+  });
+
+  const seoProducts = !hasGenericPreviewPlaceholders
+    ? store.seoProducts!
+    : generateDefaultSeoProducts(store.storeName, store.segment, store.top1?.seoProductsList, store.storeUrl);
 
   return (
     <div className="space-y-6">
@@ -323,7 +329,10 @@ export const PdfPreviewReport: React.FC<PdfPreviewReportProps> = ({ store, onNav
                 </div>
 
                 <ul className="list-none m-0 p-3 sm:p-4 divide-y divide-[#e4dfd6]/60">
-                  {area.items.map(item => {
+                  {area.items.map(rawItem => {
+                    const item = (rawItem.id === 'item-11-1' || rawItem.id === '11.1' || (area.id === 11 && rawItem.title.includes('Data da última venda')))
+                      ? formatItem11_1(rawItem, store.item11_1SalesData)
+                      : rawItem;
                     const isBenefit = item.isBanhoDeLojaCandidate;
                     const deadline = item.deadlineText || getItemDeadline(item);
                     const riskBenefit = getRiskAndBenefit(item);
@@ -372,11 +381,7 @@ export const PdfPreviewReport: React.FC<PdfPreviewReportProps> = ({ store, onNav
                             </div>
 
                             <p className="text-[12px] text-[#4a463c] mt-1">
-                              <b className="text-[#5b3a6b]">Diagnóstico:</b> {
-                                (item.id === 'item-11-1' || item.id === '11.1') && store.item11_1SalesData
-                                  ? `${store.item11_1SalesData} (Dados informados pela agência). ${item.diagnosticFindings}`
-                                  : item.diagnosticFindings
-                              }
+                              <b className="text-[#5b3a6b]">Diagnóstico:</b> {item.diagnosticFindings}
                             </p>
                             <p className="text-[12px] text-[#4a463c]">
                               <b className="text-[#166534]">Recomendação:</b> {item.recommendedAction}

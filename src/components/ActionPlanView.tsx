@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { StoreAuditData, TopUpsellProposal } from '../types';
+import { StoreAuditData, TopUpsellProposal, UpsellServiceItem } from '../types';
 import { 
   Sparkles, 
   CheckCircle2, 
@@ -15,8 +15,13 @@ import {
   Palette,
   Search,
   Check,
-  Zap
+  Zap,
+  Download,
+  Phone,
+  Mail,
+  PackagePlus
 } from 'lucide-react';
+import { downloadProposalPdf } from '../utils/proposalPdfExport';
 
 interface ActionPlanViewProps {
   store: StoreAuditData;
@@ -25,6 +30,15 @@ interface ActionPlanViewProps {
 
 export const ActionPlanView: React.FC<ActionPlanViewProps> = ({ store, onUpdateStore }) => {
   const [newProduct, setNewProduct] = useState('');
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  
+  // Custom services state
+  const [isAddingCustomService, setIsAddingCustomService] = useState(false);
+  const [newServiceTitle, setNewServiceTitle] = useState('');
+  const [newServiceDesc, setNewServiceDesc] = useState('');
+  const [newServicePrice, setNewServicePrice] = useState<number>(350);
+  const [newServiceDays, setNewServiceDays] = useState<number>(5);
+  const [newServiceImpact, setNewServiceImpact] = useState('Aumento de conversão e ticket médio');
 
   const handleTop1StatusChange = (status: 'pendente' | 'em_andamento' | 'concluido') => {
     onUpdateStore({
@@ -69,6 +83,60 @@ export const ActionPlanView: React.FC<ActionPlanViewProps> = ({ store, onUpdateS
       }
     });
   };
+
+  const handleAddCustomService = () => {
+    if (!newServiceTitle.trim()) return;
+    const newService: UpsellServiceItem = {
+      id: 'srv_' + Date.now(),
+      title: newServiceTitle.trim(),
+      description: newServiceDesc.trim() || 'Implementação técnica estratégica recomendada pela DigiBrands.',
+      estimatedPrice: Number(newServicePrice) || 0,
+      estimatedDays: Number(newServiceDays) || 1,
+      expectedImpact: newServiceImpact.trim() || 'Aumento de performance e retenção.',
+      includedInProposal: true
+    };
+
+    const updatedServices = [...(store.customUpsellServices || []), newService];
+    onUpdateStore({
+      ...store,
+      customUpsellServices: updatedServices
+    });
+
+    // Reset form
+    setNewServiceTitle('');
+    setNewServiceDesc('');
+    setNewServicePrice(350);
+    setNewServiceDays(5);
+    setNewServiceImpact('Aumento de conversão e ticket médio');
+    setIsAddingCustomService(false);
+  };
+
+  const handleRemoveCustomService = (serviceId: string) => {
+    const updatedServices = (store.customUpsellServices || []).filter(s => s.id !== serviceId);
+    onUpdateStore({
+      ...store,
+      customUpsellServices: updatedServices
+    });
+  };
+
+  const handleDownloadProposal = async () => {
+    setDownloadingPdf(true);
+    try {
+      await downloadProposalPdf(store);
+    } catch (err) {
+      console.error('Error generating proposal PDF:', err);
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
+  // Calculate total investment
+  const top2Price = Number(store.top2.estimatedPrice) || 0;
+  const top3Price = Number(store.top3.estimatedPrice) || 0;
+  const customServicesPrice = (store.customUpsellServices || [])
+    .filter(s => s.includedInProposal !== false)
+    .reduce((sum, s) => sum + (Number(s.estimatedPrice) || 0), 0);
+  const totalInvestment = top2Price + top3Price + customServicesPrice;
 
   return (
     <div className="space-y-8">
@@ -266,211 +334,445 @@ export const ActionPlanView: React.FC<ActionPlanViewProps> = ({ store, onUpdateS
         </div>
       </div>
 
-      {/* TOP 2 & TOP 3 — UPSELL PROPOSALS (COBRADOS) */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
+      {/* DIGIBRANDS PROPOSAL BUILDER & PDF GENERATOR FOR TOP 2 / TOP 3 & ADICIONAIS */}
+      <div className="bg-white rounded-2xl border-2 border-[#c6024e] shadow-md overflow-hidden">
+        {/* DigiBrands Header Bar with Official Colors */}
+        <div className="bg-[#c6024e] text-white p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b-4 border-[#fde917]">
           <div>
-            <span className="text-[11px] font-bold text-[#e0663f] uppercase tracking-wider block">
-              Ganchos Comerciais de Venda da Agência
-            </span>
-            <h3 className="text-lg font-bold text-[#1f2430]">
-              Top 2 e Top 3 — Propostas de Upsell Recomendadas
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[10px] font-black uppercase tracking-wider bg-[#fde917] text-black px-2.5 py-0.5 rounded">
+                DIGIBRANDS · PARCEIRA OFICIAL LOJA INTEGRADA
+              </span>
+              <span className="text-[11px] font-semibold text-white/90">
+                Orçamento de Escala Comercial
+              </span>
+            </div>
+            <h3 className="text-lg font-black tracking-tight flex items-center gap-2">
+              <span>Proposta Comercial Personalizada (TOP 2, TOP 3 & Adicionais)</span>
             </h3>
+            <p className="text-xs text-white/80 max-w-2xl mt-0.5">
+              Serviços, ganchos e valores preenchidos abaixo são puxados e sincronizados automaticamente na emissão do PDF oficial.
+            </p>
           </div>
-          <span className="text-xs text-[#7a7568]">
-            Serviços adicionais cobrados diretamente do seller
-          </span>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleDownloadProposal}
+              disabled={downloadingPdf}
+              className="px-5 py-2.5 rounded-xl bg-[#fde917] hover:bg-[#ffe600] text-black text-xs font-black shadow-md flex items-center gap-2 transition-all transform hover:scale-102 active:scale-98 cursor-pointer disabled:opacity-50"
+            >
+              <Download className="w-4 h-4 text-black" />
+              <span>{downloadingPdf ? 'Gerando Documento PDF...' : 'Baixar Proposta em PDF'}</span>
+            </button>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Top 2 Proposal Card */}
-          <div className="bg-white rounded-2xl border border-purple-300/80 shadow-xs p-5 space-y-4">
-            <div className="flex items-center justify-between border-b border-[#e4dfd6] pb-3">
-              <div className="flex items-center gap-2">
-                <span className="w-8 h-8 rounded-lg bg-[#5b3a6b] text-white flex items-center justify-center font-bold text-sm">
-                  02
-                </span>
-                <div>
-                  <span className="text-[10px] font-bold text-[#e0663f] uppercase">Prioridade Comercial #2</span>
-                  <h4 className="text-sm font-bold text-[#1f2430]">
-                    {store.top2.title}
-                  </h4>
+        {/* DigiBrands Agency Contact Strip */}
+        <div className="bg-black text-white p-4 text-xs grid grid-cols-1 sm:grid-cols-3 gap-3 border-b border-gray-800">
+          <div className="flex items-center gap-2">
+            <Phone className="w-4 h-4 text-[#fde917]" />
+            <span>WhatsApp: <b className="text-[#fde917] font-mono">(51) 2165-6224</b></span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Mail className="w-4 h-4 text-[#fde917]" />
+            <span>E-mail: <b className="text-white">atendimento@digibrands.com.br</b></span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Globe className="w-4 h-4 text-[#fde917]" />
+            <span>Site: <b className="text-white">digibrands.com.br</b></span>
+          </div>
+        </div>
+
+        {/* Body: TOP 2 and TOP 3 Cards */}
+        <div className="p-6 space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Top 2 Proposal Card */}
+            <div className="bg-[#faf8f5] rounded-2xl border-2 border-[#c6024e]/30 shadow-xs p-5 space-y-4">
+              <div className="flex items-center justify-between border-b border-[#e4dfd6] pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-8 h-8 rounded-lg bg-[#c6024e] text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                    02
+                  </span>
+                  <div>
+                    <span className="text-[10px] font-black text-[#c6024e] uppercase">Prioridade Comercial #2</span>
+                    <h4 className="text-sm font-bold text-[#1f2430]">
+                      {store.top2.title}
+                    </h4>
+                  </div>
                 </div>
+
+                <select
+                  value={store.top2.sellerDecision}
+                  onChange={e => handleUpsellChange('top2', 'sellerDecision', e.target.value)}
+                  className={`text-xs font-bold px-2.5 py-1 rounded-lg border cursor-pointer ${
+                    store.top2.sellerDecision === 'aceito' ? 'bg-emerald-50 text-emerald-800 border-emerald-300' :
+                    store.top2.sellerDecision === 'recusado' ? 'bg-rose-50 text-rose-800 border-rose-300' :
+                    'bg-amber-50 text-amber-800 border-amber-300'
+                  }`}
+                >
+                  <option value="em_negociacao">Em Negociação</option>
+                  <option value="aceito">Proposta Aceita ✓</option>
+                  <option value="postergado">Postergado</option>
+                  <option value="recusado">Recusado</option>
+                </select>
               </div>
 
-              <select
-                value={store.top2.sellerDecision}
-                onChange={e => handleUpsellChange('top2', 'sellerDecision', e.target.value)}
-                className={`text-xs font-bold px-2.5 py-1 rounded-lg border cursor-pointer ${
-                  store.top2.sellerDecision === 'aceito' ? 'bg-emerald-50 text-emerald-800 border-emerald-300' :
-                  store.top2.sellerDecision === 'recusado' ? 'bg-rose-50 text-rose-800 border-rose-300' :
-                  'bg-amber-50 text-amber-800 border-amber-300'
-                }`}
-              >
-                <option value="em_negociacao">Em Negociação</option>
-                <option value="aceito">Proposta Aceita ✓</option>
-                <option value="postergado">Postergado</option>
-                <option value="recusado">Recusado</option>
-              </select>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="font-bold text-[#5b3a6b] block mb-1">Título do Serviço / Pacote:</label>
-                <input
-                  type="text"
-                  value={store.top2.title}
-                  onChange={e => handleUpsellChange('top2', 'title', e.target.value)}
-                  className="w-full p-2 rounded-lg border border-[#e4dfd6] bg-[#faf8f5] font-semibold"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-[#7a7568] block mb-1">Gancho Identificado no Diagnóstico:</label>
-                <textarea
-                  rows={2}
-                  value={store.top2.hookDiagnostico}
-                  onChange={e => handleUpsellChange('top2', 'hookDiagnostico', e.target.value)}
-                  className="w-full p-2 rounded-lg border border-[#e4dfd6] bg-white"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-[#5c7a63] block mb-1">Solução Proposta:</label>
-                <textarea
-                  rows={2}
-                  value={store.top2.proposedSolution}
-                  onChange={e => handleUpsellChange('top2', 'proposedSolution', e.target.value)}
-                  className="w-full p-2 rounded-lg border border-[#e4dfd6] bg-white"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 pt-1">
+              <div className="space-y-3 text-xs">
                 <div>
-                  <label className="font-bold text-[#e0663f] block mb-1">Investimento (R$):</label>
+                  <label className="font-bold text-[#c6024e] block mb-1">Título do Serviço / Pacote:</label>
                   <input
-                    type="number"
-                    value={store.top2.estimatedPrice}
-                    onChange={e => handleUpsellChange('top2', 'estimatedPrice', Number(e.target.value))}
-                    className="w-full p-2 rounded-lg border border-[#e4dfd6] bg-white font-bold text-[#1f2430]"
+                    type="text"
+                    value={store.top2.title}
+                    onChange={e => handleUpsellChange('top2', 'title', e.target.value)}
+                    className="w-full p-2 rounded-lg border border-[#e4dfd6] bg-white font-semibold"
                   />
                 </div>
 
                 <div>
-                  <label className="font-bold text-[#7a7568] block mb-1">Prazo de Entrega (Dias):</label>
-                  <input
-                    type="number"
-                    value={store.top2.estimatedDays}
-                    onChange={e => handleUpsellChange('top2', 'estimatedDays', Number(e.target.value))}
+                  <label className="font-bold text-[#7a7568] block mb-1">Gancho Identificado no Diagnóstico:</label>
+                  <textarea
+                    rows={2}
+                    value={store.top2.hookDiagnostico}
+                    onChange={e => handleUpsellChange('top2', 'hookDiagnostico', e.target.value)}
                     className="w-full p-2 rounded-lg border border-[#e4dfd6] bg-white"
                   />
                 </div>
+
+                <div>
+                  <label className="font-bold text-[#1f2430] block mb-1">Solução Proposta DigiBrands:</label>
+                  <textarea
+                    rows={2}
+                    value={store.top2.proposedSolution}
+                    onChange={e => handleUpsellChange('top2', 'proposedSolution', e.target.value)}
+                    className="w-full p-2 rounded-lg border border-[#e4dfd6] bg-white"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="font-bold text-[#c6024e] block mb-1">Investimento (R$):</label>
+                    <input
+                      type="number"
+                      value={store.top2.estimatedPrice}
+                      onChange={e => handleUpsellChange('top2', 'estimatedPrice', Number(e.target.value))}
+                      className="w-full p-2 rounded-lg border border-[#c6024e]/50 bg-white font-black text-[#c6024e]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-[#7a7568] block mb-1">Prazo de Entrega (Dias):</label>
+                    <input
+                      type="number"
+                      value={store.top2.estimatedDays}
+                      onChange={e => handleUpsellChange('top2', 'estimatedDays', Number(e.target.value))}
+                      className="w-full p-2 rounded-lg border border-[#e4dfd6] bg-white"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="font-bold text-emerald-800 block mb-1">Impacto Esperado no Faturamento:</label>
+                  <input
+                    type="text"
+                    value={store.top2.expectedImpact}
+                    onChange={e => handleUpsellChange('top2', 'expectedImpact', e.target.value)}
+                    className="w-full p-2 rounded-lg border border-emerald-200 bg-emerald-50/60 text-emerald-900 font-medium"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Top 3 Proposal Card */}
+            <div className="bg-[#faf8f5] rounded-2xl border-2 border-[#c6024e]/30 shadow-xs p-5 space-y-4">
+              <div className="flex items-center justify-between border-b border-[#e4dfd6] pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-8 h-8 rounded-lg bg-[#c6024e] text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                    03
+                  </span>
+                  <div>
+                    <span className="text-[10px] font-black text-[#c6024e] uppercase">Prioridade Comercial #3</span>
+                    <h4 className="text-sm font-bold text-[#1f2430]">
+                      {store.top3.title}
+                    </h4>
+                  </div>
+                </div>
+
+                <select
+                  value={store.top3.sellerDecision}
+                  onChange={e => handleUpsellChange('top3', 'sellerDecision', e.target.value)}
+                  className={`text-xs font-bold px-2.5 py-1 rounded-lg border cursor-pointer ${
+                    store.top3.sellerDecision === 'aceito' ? 'bg-emerald-50 text-emerald-800 border-emerald-300' :
+                    store.top3.sellerDecision === 'recusado' ? 'bg-rose-50 text-rose-800 border-rose-300' :
+                    'bg-amber-50 text-amber-800 border-amber-300'
+                  }`}
+                >
+                  <option value="em_negociacao">Em Negociação</option>
+                  <option value="aceito">Proposta Aceita ✓</option>
+                  <option value="postergado">Postergado</option>
+                  <option value="recusado">Recusado</option>
+                </select>
               </div>
 
-              <div>
-                <label className="font-bold text-emerald-800 block mb-1">Impacto Esperado no Faturamento:</label>
-                <input
-                  type="text"
-                  value={store.top2.expectedImpact}
-                  onChange={e => handleUpsellChange('top2', 'expectedImpact', e.target.value)}
-                  className="w-full p-2 rounded-lg border border-emerald-200 bg-emerald-50/50 text-emerald-900 font-medium"
-                />
+              <div className="space-y-3 text-xs">
+                <div>
+                  <label className="font-bold text-[#c6024e] block mb-1">Título do Serviço / Pacote:</label>
+                  <input
+                    type="text"
+                    value={store.top3.title}
+                    onChange={e => handleUpsellChange('top3', 'title', e.target.value)}
+                    className="w-full p-2 rounded-lg border border-[#e4dfd6] bg-white font-semibold"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-[#7a7568] block mb-1">Gancho Identificado no Diagnóstico:</label>
+                  <textarea
+                    rows={2}
+                    value={store.top3.hookDiagnostico}
+                    onChange={e => handleUpsellChange('top3', 'hookDiagnostico', e.target.value)}
+                    className="w-full p-2 rounded-lg border border-[#e4dfd6] bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-[#1f2430] block mb-1">Solução Proposta DigiBrands:</label>
+                  <textarea
+                    rows={2}
+                    value={store.top3.proposedSolution}
+                    onChange={e => handleUpsellChange('top3', 'proposedSolution', e.target.value)}
+                    className="w-full p-2 rounded-lg border border-[#e4dfd6] bg-white"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="font-bold text-[#c6024e] block mb-1">Investimento (R$):</label>
+                    <input
+                      type="number"
+                      value={store.top3.estimatedPrice}
+                      onChange={e => handleUpsellChange('top3', 'estimatedPrice', Number(e.target.value))}
+                      className="w-full p-2 rounded-lg border border-[#c6024e]/50 bg-white font-black text-[#c6024e]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-[#7a7568] block mb-1">Prazo de Entrega (Dias):</label>
+                    <input
+                      type="number"
+                      value={store.top3.estimatedDays}
+                      onChange={e => handleUpsellChange('top3', 'estimatedDays', Number(e.target.value))}
+                      className="w-full p-2 rounded-lg border border-[#e4dfd6] bg-white"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="font-bold text-emerald-800 block mb-1">Impacto Esperado no Faturamento:</label>
+                  <input
+                    type="text"
+                    value={store.top3.expectedImpact}
+                    onChange={e => handleUpsellChange('top3', 'expectedImpact', e.target.value)}
+                    className="w-full p-2 rounded-lg border border-emerald-200 bg-emerald-50/60 text-emerald-900 font-medium"
+                  />
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Top 3 Proposal Card */}
-          <div className="bg-white rounded-2xl border border-purple-300/80 shadow-xs p-5 space-y-4">
-            <div className="flex items-center justify-between border-b border-[#e4dfd6] pb-3">
-              <div className="flex items-center gap-2">
-                <span className="w-8 h-8 rounded-lg bg-[#5b3a6b] text-white flex items-center justify-center font-bold text-sm">
-                  03
+          {/* CUSTOM UPSELL SERVICES MANAGER (ADIÇÃO DE NOVOS SERVIÇOS À PROPOSTA) */}
+          <div className="bg-[#faf8f5] p-5 rounded-2xl border border-[#e4dfd6] space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#e4dfd6] pb-3">
+              <div>
+                <span className="text-[10px] font-black text-[#c6024e] uppercase">
+                  Personalização de Proposta
                 </span>
-                <div>
-                  <span className="text-[10px] font-bold text-[#e0663f] uppercase">Prioridade Comercial #3</span>
-                  <h4 className="text-sm font-bold text-[#1f2430]">
-                    {store.top3.title}
-                  </h4>
-                </div>
+                <h4 className="text-sm font-bold text-[#1f2430]">
+                  Serviços Adicionais Inclusos no Orçamento
+                </h4>
+                <p className="text-xs text-[#7a7568]">
+                  Adicione outros serviços da DigiBrands como Tráfego Pago, E-mail Marketing, Automação ou Recuperação de Vendas.
+                </p>
               </div>
 
-              <select
-                value={store.top3.sellerDecision}
-                onChange={e => handleUpsellChange('top3', 'sellerDecision', e.target.value)}
-                className={`text-xs font-bold px-2.5 py-1 rounded-lg border cursor-pointer ${
-                  store.top3.sellerDecision === 'aceito' ? 'bg-emerald-50 text-emerald-800 border-emerald-300' :
-                  store.top3.sellerDecision === 'recusado' ? 'bg-rose-50 text-rose-800 border-rose-300' :
-                  'bg-amber-50 text-amber-800 border-amber-300'
-                }`}
+              <button
+                onClick={() => setIsAddingCustomService(!isAddingCustomService)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#c6024e] text-white text-xs font-bold hover:bg-[#a50241] cursor-pointer shrink-0 transition-colors"
               >
-                <option value="em_negociacao">Em Negociação</option>
-                <option value="aceito">Proposta Aceita ✓</option>
-                <option value="postergado">Postergado</option>
-                <option value="recusado">Recusado</option>
-              </select>
+                <PackagePlus className="w-4 h-4" />
+                <span>{isAddingCustomService ? 'Cancelar Inclusão' : '+ Adicionar Novo Serviço'}</span>
+              </button>
             </div>
 
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="font-bold text-[#5b3a6b] block mb-1">Título do Serviço / Pacote:</label>
-                <input
-                  type="text"
-                  value={store.top3.title}
-                  onChange={e => handleUpsellChange('top3', 'title', e.target.value)}
-                  className="w-full p-2 rounded-lg border border-[#e4dfd6] bg-[#faf8f5] font-semibold"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-[#7a7568] block mb-1">Gancho Identificado no Diagnóstico:</label>
-                <textarea
-                  rows={2}
-                  value={store.top3.hookDiagnostico}
-                  onChange={e => handleUpsellChange('top3', 'hookDiagnostico', e.target.value)}
-                  className="w-full p-2 rounded-lg border border-[#e4dfd6] bg-white"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-[#5c7a63] block mb-1">Solução Proposta:</label>
-                <textarea
-                  rows={2}
-                  value={store.top3.proposedSolution}
-                  onChange={e => handleUpsellChange('top3', 'proposedSolution', e.target.value)}
-                  className="w-full p-2 rounded-lg border border-[#e4dfd6] bg-white"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 pt-1">
-                <div>
-                  <label className="font-bold text-[#e0663f] block mb-1">Investimento (R$):</label>
-                  <input
-                    type="number"
-                    value={store.top3.estimatedPrice}
-                    onChange={e => handleUpsellChange('top3', 'estimatedPrice', Number(e.target.value))}
-                    className="w-full p-2 rounded-lg border border-[#e4dfd6] bg-white font-bold text-[#1f2430]"
-                  />
+            {/* Inline Form to Add Service */}
+            {isAddingCustomService && (
+              <div className="bg-white p-4 rounded-xl border border-[#c6024e]/30 shadow-xs space-y-3 animate-in fade-in">
+                <div className="font-bold text-xs text-[#1f2430] flex items-center gap-1">
+                  <Sparkles className="w-3.5 h-3.5 text-[#c6024e]" />
+                  <span>Cadastrar Novo Serviço de Upsell</span>
                 </div>
 
-                <div>
-                  <label className="font-bold text-[#7a7568] block mb-1">Prazo de Entrega (Dias):</label>
-                  <input
-                    type="number"
-                    value={store.top3.estimatedDays}
-                    onChange={e => handleUpsellChange('top3', 'estimatedDays', Number(e.target.value))}
-                    className="w-full p-2 rounded-lg border border-[#e4dfd6] bg-white"
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <label className="font-semibold text-gray-700 block mb-1">Título do Serviço:</label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Gestão de Anúncios no Meta Ads & Google Ads"
+                      value={newServiceTitle}
+                      onChange={e => setNewServiceTitle(e.target.value)}
+                      className="w-full p-2 border border-[#e4dfd6] rounded-lg text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-semibold text-gray-700 block mb-1">Impacto Esperado:</label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Crescimento de 35% no tráfego qualificado"
+                      value={newServiceImpact}
+                      onChange={e => setNewServiceImpact(e.target.value)}
+                      className="w-full p-2 border border-[#e4dfd6] rounded-lg text-xs"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="font-semibold text-gray-700 block mb-1">Descrição / Escopo Técnico:</label>
+                    <textarea
+                      rows={2}
+                      placeholder="Descreva as entregas do serviço..."
+                      value={newServiceDesc}
+                      onChange={e => setNewServiceDesc(e.target.value)}
+                      className="w-full p-2 border border-[#e4dfd6] rounded-lg text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-semibold text-[#c6024e] block mb-1">Valor do Investimento (R$):</label>
+                    <input
+                      type="number"
+                      value={newServicePrice}
+                      onChange={e => setNewServicePrice(Number(e.target.value))}
+                      className="w-full p-2 border border-[#c6024e]/40 rounded-lg text-xs font-bold text-[#c6024e]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-semibold text-gray-700 block mb-1">Prazo de Implantação (Dias):</label>
+                    <input
+                      type="number"
+                      value={newServiceDays}
+                      onChange={e => setNewServiceDays(Number(e.target.value))}
+                      className="w-full p-2 border border-[#e4dfd6] rounded-lg text-xs"
+                    />
+                  </div>
                 </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-[#e4dfd6]">
+                  <button
+                    onClick={() => setIsAddingCustomService(false)}
+                    className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded-lg cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleAddCustomService}
+                    className="px-4 py-1.5 text-xs font-bold bg-[#c6024e] text-white rounded-lg hover:bg-[#a50241] cursor-pointer"
+                  >
+                    Incluir na Proposta
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* List of Custom Upsell Services */}
+            {(!store.customUpsellServices || store.customUpsellServices.length === 0) ? (
+              <div className="p-4 bg-white/70 rounded-xl border border-dashed border-[#e4dfd6] text-center text-xs text-[#7a7568]">
+                Nenhum serviço adicional adicionado ainda. O PDF gerará a proposta com o <b>TOP 2</b> e <b>TOP 3</b>.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {store.customUpsellServices.map(service => (
+                  <div 
+                    key={service.id}
+                    className="p-3 bg-white rounded-xl border border-[#e4dfd6] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-[#1f2430] truncate">{service.title}</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-pink-50 text-[#c6024e] font-bold">
+                          Personalizado
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[#7a7568] line-clamp-1 mt-0.5">
+                        {service.description}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-4 shrink-0">
+                      <span className="text-[11px] text-gray-500">{service.estimatedDays} dias úteis</span>
+                      <span className="font-bold text-sm text-[#c6024e]">
+                        R$ {Number(service.estimatedPrice).toFixed(2).replace('.', ',')}
+                      </span>
+                      <button
+                        onClick={() => handleRemoveCustomService(service.id)}
+                        className="p-1.5 text-gray-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer"
+                        title="Remover serviço da proposta"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Proposal Terms & Consolidated Total Bar */}
+          <div className="bg-black text-white p-5 rounded-2xl border-t-4 border-[#fde917] space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <div>
+                <label className="font-bold text-[#fde917] block mb-1">
+                  Condições de Pagamento da Proposta:
+                </label>
+                <input
+                  type="text"
+                  value={store.proposalPaymentTerms || 'Em até 3x sem juros ou 5% de desconto à vista via PIX.'}
+                  onChange={e => onUpdateStore({ ...store, proposalPaymentTerms: e.target.value })}
+                  placeholder="Ex: Até 3x sem juros ou 5% no PIX"
+                  className="w-full p-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-xs focus:border-[#fde917] focus:outline-none"
+                />
               </div>
 
               <div>
-                <label className="font-bold text-emerald-800 block mb-1">Impacto Esperado no Faturamento:</label>
+                <label className="font-bold text-[#fde917] block mb-1">
+                  Validade da Proposta Comercial (Dias):
+                </label>
                 <input
-                  type="text"
-                  value={store.top3.expectedImpact}
-                  onChange={e => handleUpsellChange('top3', 'expectedImpact', e.target.value)}
-                  className="w-full p-2 rounded-lg border border-emerald-200 bg-emerald-50/50 text-emerald-900 font-medium"
+                  type="number"
+                  value={store.proposalValidityDays || 10}
+                  onChange={e => onUpdateStore({ ...store, proposalValidityDays: Number(e.target.value) })}
+                  className="w-full p-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-xs focus:border-[#fde917] focus:outline-none"
                 />
+              </div>
+            </div>
+
+            {/* Consolidated Summary & PDF CTA */}
+            <div className="pt-3 border-t border-gray-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <span className="text-[11px] text-gray-400 block">Investimento Total dos Serviços Propostos:</span>
+                <span className="text-2xl font-black text-[#fde917]">
+                  R$ {totalInvestment.toFixed(2).replace('.', ',')}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleDownloadProposal}
+                  disabled={downloadingPdf}
+                  className="w-full sm:w-auto px-6 py-3 rounded-xl bg-[#c6024e] hover:bg-[#a50241] text-white text-xs font-bold shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-colors disabled:opacity-50"
+                >
+                  <Download className="w-4 h-4 text-[#fde917]" />
+                  <span>{downloadingPdf ? 'Processando...' : 'Baixar PDF da Proposta de Orçamento'}</span>
+                </button>
               </div>
             </div>
           </div>

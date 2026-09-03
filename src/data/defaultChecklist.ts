@@ -646,8 +646,11 @@ export const DEFAULT_CHECKLIST_AREAS: ChecklistArea[] = [
         title: "Data da última venda e volume nos últimos 30/60/90 dias",
         status: "ajustar",
         priority: "alta",
-        diagnosticFindings: "Volume de vendas instável com quedas nos últimos 30 dias devido à baixa tração de tráfego.",
-        recommendedAction: "Trabalhar ações de reativação de base de clientes e anúncios pontuais.",
+        diagnosticFindings: "Ausência de vendas registradas nos últimos 30, 60 ou 90 dias na plataforma Loja Integrada. Para destravar os primeiros pedidos com consistência e converter o tráfego em clientes, é indispensável a aplicação combinada do TOP 1 (Estruturação Essencial do Benefício Loja Integrada: banner promocional de alta conversão, layout profissional, SEO nos 20 produtos principais e domínio próprio), TOP 2 (Automação e Recuperação de Carrinho Abandonado via WhatsApp) e TOP 3 (Campanhas de Aquisição e Tráfego Qualificado).",
+        recommendedAction: "Implementar imediatamente o TOP 1 (Escopo do Benefício Loja Integrada) para eliminar barreiras visuais e de credibilidade, associado à ativação do TOP 2 (Recuperação no WhatsApp) e TOP 3 (Tráfego Pago e Orgânico) para gerar tração comercial e volume diário de vendas.",
+        riskIfNotFixed: "Permanência do cenário de estagnação sem vendas, desperdício dos visitantes recebidos e perda contínua de compradores para lojas concorrentes estruturadas.",
+        benefitIfFixed: "Destravamento imediato das primeiras vendas na plataforma, ativação do funil de conversão completo e recuperação automática de vendas perdidas para faturar com consistência.",
+        deadlineText: "Prazo de 15 a 30 dias",
         isBanhoDeLojaCandidate: false
       },
       {

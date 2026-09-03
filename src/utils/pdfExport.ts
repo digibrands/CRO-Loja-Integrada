@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { StoreAuditData } from '../types';
-import { getItemDeadline, getRiskAndBenefit, generateDefaultSeoProducts } from './auditHelpers';
+import { getItemDeadline, getRiskAndBenefit, generateDefaultSeoProducts, formatItem11_1 } from './auditHelpers';
 
 /**
  * Downloads a vector-based, high-fidelity PDF report for the store audit.
@@ -277,34 +277,27 @@ export async function downloadDirectPdf(store: StoreAuditData): Promise<boolean>
       ]);
 
       // Items in this area
-      (area.items || []).forEach((item) => {
-        let statusBadge = 'CONFORME';
+      (area.items || []).forEach((rawItem) => {
+        let item = { ...rawItem };
+        if (item.id === 'item-11-1' || item.id === '11.1' || (area.id === 11 && item.title.includes('Data da última venda'))) {
+          item = formatItem11_1(item, store.item11_1SalesData);
+        }
 
-        if (item.status === 'critico') {
+        let statusBadge = 'CONFORME';
+        const sLower = (item.status || '').toLowerCase().trim();
+        if (sLower === 'critico' || sLower === 'crítico') {
           statusBadge = 'CRÍTICO';
-        } else if (item.status === 'ajustar') {
+        } else if (sLower === 'ajustar') {
           statusBadge = 'AJUSTAR';
-        } else if (item.status === 'nao_aplicavel') {
+        } else if (sLower === 'nao_aplicavel') {
           statusBadge = 'N/A';
         }
 
         const isBenefitItem = item.isBanhoDeLojaCandidate;
         const banhoTag = isBenefitItem ? '\n[Item contemplado no escopo do benefício Loja Integrada]' : '';
 
-        // Handle item 11.1 special logic
-        let findingsText = (item.diagnosticFindings || 'Item avaliado.').replace(/banho de loja/gi, 'Escopo do Benefício Loja Integrada');
-        let actionText = (item.recommendedAction || 'Manter conformidade.').replace(/banho de loja/gi, 'Escopo do Benefício Loja Integrada');
-        
-        if (item.id === 'item-11-1' || item.id === '11.1' || (area.id === 11 && item.title.includes('Data da última venda'))) {
-          const salesVal = (store.item11_1SalesData || '').trim().toLowerCase();
-          const hasNoSales = !salesVal || salesVal.includes('não teve vendas') || salesVal.includes('sem vendas') || salesVal.includes('nenhuma venda') || salesVal.includes('0 vendas') || salesVal.includes('ainda não');
-          if (hasNoSales) {
-            findingsText = 'A loja ainda não registrou vendas na plataforma. Diagnóstico prioritário: estruturação imediata do TOP 1, TOP 2 e TOP 3 para destravar as primeiras vendas.';
-            actionText = 'Implementar o TOP 1 (Escopo do Benefício Loja Integrada) imediatamente e ativar o TOP 2 e TOP 3.';
-          } else if (store.item11_1SalesData && !findingsText.includes(store.item11_1SalesData)) {
-            findingsText = `${store.item11_1SalesData} (Dados informados pela agência). ${findingsText}`;
-          }
-        }
+        const findingsText = (item.diagnosticFindings || 'Item avaliado.').replace(/banho de loja/gi, 'Escopo do Benefício Loja Integrada');
+        const actionText = (item.recommendedAction || 'Manter conformidade.').replace(/banho de loja/gi, 'Escopo do Benefício Loja Integrada');
 
         // Deadline
         const deadline = getItemDeadline(item);
@@ -323,10 +316,27 @@ export async function downloadDirectPdf(store: StoreAuditData): Promise<boolean>
         // Row background: light green for benefit items
         const rowBg: [number, number, number] | undefined = isBenefitItem ? [240, 253, 244] : undefined;
 
+        let statusBg: [number, number, number] = [107, 114, 128]; // Slate gray
+        if (sLower === 'critico' || sLower === 'crítico') {
+          statusBg = [220, 38, 38]; // Red
+        } else if (sLower === 'ajustar') {
+          statusBg = [234, 88, 12]; // Orange
+        } else if (sLower === 'conforme') {
+          statusBg = [22, 163, 74]; // Green
+        }
+
         tableRows.push([
           { content: item.id || '', styles: rowBg ? { fillColor: rowBg } : {} },
           { content: `${item.title}${banhoTag}`, styles: rowBg ? { fillColor: rowBg } : {} },
-          { content: statusBadge, styles: {} }, // Color handled in didParseCell
+          { 
+            content: statusBadge, 
+            styles: { 
+              fillColor: statusBg, 
+              textColor: [255, 255, 255], 
+              fontStyle: 'bold', 
+              halign: 'center' 
+            } 
+          },
           { content: detailedContent, styles: rowBg ? { fillColor: rowBg } : {} },
         ]);
       });
@@ -360,23 +370,28 @@ export async function downloadDirectPdf(store: StoreAuditData): Promise<boolean>
       didParseCell: (data) => {
         // Enforce exact background colors and white text on the Status column (column index 2)
         if (data.section === 'body' && data.column.index === 2) {
-          const val = String(data.cell.raw || '').trim().toUpperCase();
-          if (val === 'CRÍTICO' || val === 'CRITICO') {
+          const rawObj = data.cell.raw;
+          const cellText = typeof rawObj === 'object' && rawObj !== null && 'content' in rawObj
+            ? String((rawObj as any).content || '')
+            : String(rawObj || data.cell.text?.[0] || '');
+          const val = cellText.trim().toUpperCase();
+
+          if (val.includes('CRÍTICO') || val.includes('CRITICO')) {
             data.cell.styles.fillColor = [220, 38, 38]; // Red
             data.cell.styles.textColor = [255, 255, 255]; // White
             data.cell.styles.fontStyle = 'bold';
             data.cell.styles.halign = 'center';
-          } else if (val === 'AJUSTAR') {
+          } else if (val.includes('AJUSTAR')) {
             data.cell.styles.fillColor = [234, 88, 12]; // Orange
             data.cell.styles.textColor = [255, 255, 255]; // White
             data.cell.styles.fontStyle = 'bold';
             data.cell.styles.halign = 'center';
-          } else if (val === 'CONFORME') {
+          } else if (val.includes('CONFORME')) {
             data.cell.styles.fillColor = [22, 163, 74]; // Green
             data.cell.styles.textColor = [255, 255, 255]; // White
             data.cell.styles.fontStyle = 'bold';
             data.cell.styles.halign = 'center';
-          } else if (val === 'N/A') {
+          } else {
             data.cell.styles.fillColor = [107, 114, 128]; // Gray
             data.cell.styles.textColor = [255, 255, 255]; // White
             data.cell.styles.fontStyle = 'bold';
@@ -411,9 +426,15 @@ export async function downloadDirectPdf(store: StoreAuditData): Promise<boolean>
     );
     seoPageY += 6;
 
-    // Retrieve or generate 20 SEO products
-    const seoProducts = (store.seoProducts && store.seoProducts.length >= 5)
-      ? store.seoProducts
+    // Retrieve or generate 20 SEO products, rejecting any generic placeholders
+    const hasGenericPlaceholders = !store.seoProducts || store.seoProducts.length < 5 || store.seoProducts.some(p => {
+      const name = (p.productName || '').toLowerCase();
+      const kw = (p.focusKeyword || '').toLowerCase();
+      return name.includes('produto principal') || name.includes('produto destaque') || kw.includes('produto principal') || /produto\s+\d+/i.test(name);
+    });
+
+    const seoProducts = !hasGenericPlaceholders
+      ? store.seoProducts!
       : generateDefaultSeoProducts(store.storeName, store.segment, store.top1?.seoProductsList, store.storeUrl);
 
     const baseUrl = store.storeUrl 
@@ -465,7 +486,11 @@ export async function downloadDirectPdf(store: StoreAuditData): Promise<boolean>
       },
       didParseCell: (data) => {
         if (data.section === 'body' && data.column.index === 2) {
-          const val = String(data.cell.raw || '').trim();
+          const rawObj = data.cell.raw;
+          const cellText = typeof rawObj === 'object' && rawObj !== null && 'content' in rawObj
+            ? String((rawObj as any).content || '')
+            : String(rawObj || data.cell.text?.[0] || '');
+          const val = cellText.trim();
           if (val === 'Muito Alta') {
             data.cell.styles.textColor = [185, 28, 28]; // Dark red
           } else if (val === 'Alta') {
@@ -537,8 +562,14 @@ export function downloadHtmlReport(store: StoreAuditData): void {
     ? (store.storeUrl.startsWith('http') ? store.storeUrl.replace(/\/$/, '') : `https://${store.storeUrl.replace(/\/$/, '')}`)
     : `https://${(store.storeName || 'loja').toLowerCase().replace(/[^a-z0-9]/g, '')}.lojaintegrada.com.br`;
 
-  const seoProducts = (store.seoProducts && store.seoProducts.length >= 5)
-    ? store.seoProducts
+  const hasGenericHtmlPlaceholders = !store.seoProducts || store.seoProducts.length < 5 || store.seoProducts.some(p => {
+    const name = (p.productName || '').toLowerCase();
+    const kw = (p.focusKeyword || '').toLowerCase();
+    return name.includes('produto principal') || name.includes('produto destaque') || kw.includes('produto principal') || /produto\s+\d+/i.test(name);
+  });
+
+  const seoProducts = !hasGenericHtmlPlaceholders
+    ? store.seoProducts!
     : generateDefaultSeoProducts(store.storeName, store.segment, store.top1?.seoProductsList, store.storeUrl);
 
   const htmlContent = `<!DOCTYPE html>
